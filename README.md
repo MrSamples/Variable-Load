@@ -1,11 +1,11 @@
 Custom SparkFun Variable Load
 ==========================================
 
-Up to 30 Volts (steps of milliVolts (30,001 different steps))
-Up to 4 Amps (steps of milliAmps (4,001 different steps))
-Limit of 15 Watts
-For Duration, Interval, and Log Time: steps of centiseconds (1 centisecond == 10 milliseconds)
-128 KB usable/storable flash memory (22.222... days (32,000 minutes) (~2/3 month) worth of storage at 1 minute log time, ~7.5 months worth of storage at 10 minute log time)
+* Up to 30 Volts (steps of milliVolts (30,001 different steps))
+* Up to 4 Amps (steps of milliAmps (4,001 different steps))
+* Limit of 15 Watts
+* For Duration, Interval, and Log Time: steps of centiseconds (1 centisecond == 10 milliseconds)
+* 128 KB usable/storable flash memory (22.222... days (32,000 minutes) (~2/3 month) worth of storage at 1 minute log time, ~7.5 months worth of storage at 10 minute log time)
 
 Original functionality of the Variable Load Kit (VLK) allowed for a quiescent (constant and steady; "rest") current draw on a hooked-up battery.
 
@@ -18,6 +18,7 @@ The last main feature I have added to the Variable Load Kit is the ability to lo
 I have also created a small C# program that connects to the board and reads the flash off of it, and stores it in a csv file. This way the user does not need to use a programmer to connect to the chip itself and read the literal flash into an Intel hex file, having to convert the hex values into decimal to interpret the data. I have placed this in a separate repository so that the building of the project does not break from a random C# project in the folder.
 
 ![PuTTY Screenshot of custom VLK Control Panel (https://imgur.com/a/UHOGVdm)](https://i.imgur.com/dlT7Rh2.png)
+
 Screenshot of the serial port control panel if the user decides to use the board on a computer rather than standalone.
 
 Follow SparkFun's tutorial to build the project and load this code into your Variable Load Kit.
