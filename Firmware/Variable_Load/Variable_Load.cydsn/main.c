@@ -3,11 +3,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "terminal.h"
+#include "dataBlock.h"
 
-#define KPN 19
-#define KPD 100
-#define KIN 1
-#define KID 10
+#define KPN 100 //default 19
+#define KPD 100 //default 100
+#define KIN 20 //default 1
+#define KID 12 //default 10
 
 #define DEFAULT_I_LIM 0
 #define DEFAULT_V_MIN 2000
@@ -54,17 +55,136 @@ static uint32 DMABuffer;
 void DoPid();
 void OutputEnable(bool v);
 
-volatile static int32 systemTimer = 0;
+volatile static int32 systemTimer = 0, tempTimer = 0, tempTimer2 = 0, tempTimer3 = 0, logTime = 60000;
 
 static float fiLimit;
-volatile static uint32 iLimit = DEFAULT_I_LIM;
-volatile static uint16 vSource = 0;
+volatile static uint32 iLimit = DEFAULT_I_LIM, iRest = DEFAULT_I_LIM, iPulse1 = 60, iPulse2 = 0;
+volatile static uint16 vSource = 0, vSourceMin = 65535, vSourceMax = 0;
 volatile static int iSource = 0;
 volatile static uint32 dt = 0;
-volatile static int vMin = DEFAULT_V_MIN;
+volatile static int vMin = DEFAULT_V_MIN, vRest = DEFAULT_V_MIN, vPulse1 = DEFAULT_V_MIN, vPulse2 = DEFAULT_V_MIN;
 volatile static uint32 maHours;
+unsigned int preset = 1, pulseDuration1 = 100, pulseInterval1 = 300, pulseDuration2 = 0, pulseInterval2 = 300, pulseGroupDuration = 600, pulseGroupInterval = 1200, iter = 0;
+uint8 page = 0x01u, vSourceMin1 = 0xffu, vSourceMin2 = 0xffu, vSourceMax1 = 0x00u, vSourceMax2 = 0x00u;
+uint16 rowNum = 0x0000u;
+bool enableOutput = false, isGroupOn = false, once = true, last = false, LCDToggle = true;
 
-bool enableOutput = false;
+cystatus WriteData(uint8 _page, uint16 _rowNum, const uint8 *_rowData) {
+	CySetTemp();
+	return CyWriteRowData(_page, _rowNum, _rowData);
+}
+
+void profile(unsigned int p) {
+	if (p == 0) { //custom profile
+		preset = 0;
+		iRest = 0;
+		iPulse1 = 0;
+		iPulse2 = 0;
+		vRest = 0;
+		vMin = vRest;
+		vPulse1 = 0;
+		vPulse2 = 0;
+		pulseDuration1 = 0;
+		pulseInterval1 = 500;
+		pulseDuration2 = 0;
+		pulseInterval2 = 500;
+		pulseGroupDuration = 0;
+		pulseGroupInterval = 1000;
+		logTime = 0;
+		return;
+	}
+
+	if (p == 1) { //default profile
+		preset = 1;
+		iRest = 1;
+		iPulse1 = 100;
+		iPulse2 = 60;
+		vRest = DEFAULT_V_MIN;
+		vMin = vRest;
+		vPulse1 = DEFAULT_V_MIN;
+		vPulse2 = DEFAULT_V_MIN;
+		pulseDuration1 = 20;
+		pulseInterval1 = 500; //500
+		pulseDuration2 = 100;
+		pulseInterval2 = 300;
+		pulseGroupDuration = 1000; //3000
+		pulseGroupInterval = 6000; //9000
+		logTime = 60000;
+		return;
+	}
+	if (p == 2) {
+		preset = 2;
+		iRest = 1;
+		iPulse1 = 100;
+		iPulse2 = 35;
+		vRest = 1700;
+		vMin = vRest;
+		vPulse1 = 2800;
+		vPulse2 = 2000;
+		pulseDuration1 = 1;
+		pulseInterval1 = 1200;
+		pulseDuration2 = 30;
+		pulseInterval2 = 300;
+		pulseGroupDuration = 3000;
+		pulseGroupInterval = 9000;
+		logTime = 6000;
+		return;
+	}
+	if (p == 3) {
+		preset = 3;
+		iRest = 0;
+		iPulse1 = 85;
+		iPulse2 = 60;
+		vRest = DEFAULT_V_MIN;
+		vMin = vRest;
+		vPulse1 = DEFAULT_V_MIN;
+		vPulse2 = DEFAULT_V_MIN;
+		pulseDuration1 = 10;
+		pulseInterval1 = 100;
+		pulseDuration2 = 25;
+		pulseInterval2 = 400;
+		pulseGroupDuration = 300;
+		pulseGroupInterval = 1000;
+		logTime = 6000;
+		return;
+	}
+	if (p == 4) {
+		preset = 4;
+		iRest = 0;
+		iPulse1 = 60;
+		iPulse2 = 46;
+		vRest = DEFAULT_V_MIN;
+		vMin = vRest;
+		vPulse1 = DEFAULT_V_MIN;
+		vPulse2 = DEFAULT_V_MIN;
+		pulseDuration1 = 1;
+		pulseInterval1 = 100;
+		pulseDuration2 = 10;
+		pulseInterval2 = 70;
+		pulseGroupDuration = 200;
+		pulseGroupInterval = 500;
+		logTime = 6000;
+		return;
+	}
+	if (p == 5) {
+		preset = 5;
+		iRest = 0;
+		iPulse1 = 90;
+		iPulse2 = 60;
+		vRest = DEFAULT_V_MIN;
+		vMin = vRest;
+		vPulse1 = DEFAULT_V_MIN;
+		vPulse2 = DEFAULT_V_MIN;
+		pulseDuration1 = 1;
+		pulseInterval1 = 90;
+		pulseDuration2 = 10;
+		pulseInterval2 = 50;
+		pulseGroupDuration = 250;
+		pulseGroupInterval = 500;
+		logTime = 6000;
+		return;
+	}
+}
 
 int main(void)
 {
@@ -82,7 +202,7 @@ int main(void)
 	// Create our timing "tick" variables. These are used to record when the last
 	// iteration of an action in the main loop happened and to trigger the next
 	// iteration when some number of clock ticks have passed.
-	int32_t SlowTick = 0;
+	int32_t SlowTick = 0, /*myPulse1Tick = 0, myPulse2Tick = 0, myPulseGroupTick = 0, */myLogTick = 0;
 
 	Gate_Drive_Tune_Start();
 	Offset_Start();
@@ -92,7 +212,7 @@ int main(void)
 	Source_ADC_Start();
 	I_Source_ADC_Start();
   UART_Start();
-
+  
 	bool upPressed = false;
 	bool downPressed = false;
 	bool entPressed = false;
@@ -104,7 +224,7 @@ int main(void)
 	ConversionClock_Start();
 	LCD_Start();
 	LCD_DisplayOn();
-	LCD_PrintString("Hello, world");
+	LCD_PrintString("Hello World!");
 
 	/* DMA Configuration for SourceDMA */
 	SourceDMA_Chan = SourceDMA_DmaInitialize(SourceDMA_BYTES_PER_BURST, SourceDMA_REQUEST_PER_BURST,
@@ -143,8 +263,25 @@ int main(void)
 
 	init();
 
+	// testing flash write and DMA read. **********************************************************************************************************************
+	/*const uint8 testVoltage[] = {110};
+	CySetTemp();
+	CyWriteRowData(0x00u, 0x0000u, testVoltage);
+	uint8* TEST = (uint8*)(CY_FLASH_BASE + ((0x00u * CY_FLASH_SIZEOF_ARRAY) + (0x0000u * CY_FLASH_SIZEOF_ROW)));*/
+	/*uint16* TEST;
+	uint8 yes = SourceDMA_DmaInitialize(0, 0, 0x00000000u, *TEST);*/
+	//uint32 rowNumTemp = (uint32)&block << 16;
+	//uint16 rowNum = rowNumTemp >> 16;
+	// cystatus p;
+    // CySetTemp();
+	// CyWriteRowData(0x02u, 0x0000u, rowData);
+
+
 	for (;;)
 	{
+		if (systemTimer - logTime > systemTimer)
+			systemTimer += logTime;
+		
 		if (0u != USBUART_IsConfigurationChanged())
 		{
 			if (0u != USBUART_GetConfiguration())
@@ -179,7 +316,7 @@ int main(void)
       testBuff[0] = '\0';
       testBuff[1] = '\0';
     }
-    
+	
 		if (0u == CapSense_IsBusy())
 		{
 			CapSense_UpdateEnabledBaselines();
@@ -190,8 +327,8 @@ int main(void)
 		if (CapSense_CheckIsWidgetActive(CapSense_BACK__BTN) && backPressed == false)
 		{
 			backPressed = true;
-			iLimit = DEFAULT_I_LIM;
-			vMin = DEFAULT_V_MIN;
+			iRest = DEFAULT_I_LIM;
+			vRest = DEFAULT_V_MIN;
 			OutputEnable(false);
 		}
 		else if (!CapSense_CheckIsWidgetActive(CapSense_BACK__BTN) && backPressed == true)
@@ -212,11 +349,16 @@ int main(void)
 		if (CapSense_CheckIsWidgetActive(CapSense_DOWN__BTN) && downPressed == false)
 		{
 			downPressed = true;
-			if (iLimit < 10) iLimit = 0;
-			else if (iLimit < 101) { if (iLimit >= 10) iLimit -= 10; }
-			else if (iLimit < 501) iLimit -= 50;
-			else if (iLimit < 1001) iLimit -= 100;
-			else iLimit -= 500;
+			if (preset == 0)
+				profile(1);
+			else
+				profile(preset - 1);
+			/*old down button logic
+			if (iRest < 10) iRest = 0;
+			else if (iRest < 101) { if (iRest >= 10) iRest -= 10; }
+			else if (iRest < 501) iRest -= 50;
+			else if (iRest < 1001) iRest -= 100;
+			else iRest -= 500;*/
 		}
 		else if (!CapSense_CheckIsWidgetActive(CapSense_DOWN__BTN) && downPressed == true)
 		{
@@ -226,11 +368,16 @@ int main(void)
 		if (CapSense_CheckIsWidgetActive(CapSense_UP__BTN) && upPressed == false)
 		{
 			upPressed = true;
-			if (iLimit < 99) iLimit += 10;
-			else if (iLimit < 500) iLimit += 50;
-			else if (iLimit < 1000) iLimit += 100;
-			else if (iLimit < 3500) iLimit += 500;
-			else iLimit = 4000;
+			if (preset == 5)
+				profile(1);
+			else
+				profile(preset + 1);
+			/*old up button logic
+			if (iRest < 99) iRest += 10;
+			else if (iRest < 500) iRest += 50;
+			else if (iRest < 1000) iRest += 100;
+			else if (iRest < 3500) iRest += 500;
+			else iRest = 4000;*/
 		}
 		else if (!CapSense_CheckIsWidgetActive(CapSense_UP__BTN) && upPressed == true)
 		{
@@ -265,64 +412,371 @@ int main(void)
 
     vAve = vAve/40;
 		vSource = 10*Source_ADC_CountsTo_mVolts((uint16)(vAve)); // 10*vAve/40
+
+		if (vSource < vSourceMin) {
+			vSourceMin = vSource;
+			vSourceMin1 = (vSourceMin >> 8) & 0xff;
+			vSourceMin2 = vSourceMin & 0xff;
+		}
+		if (vSource > vSourceMax) {
+		    vSourceMax = vSource;
+			vSourceMax1 = (vSourceMax >> 8) & 0xff;
+			vSourceMax2 = vSourceMax & 0xff;
+		}
+		
+		if (vSource < vPulse2) {
+			if (tempTimer != 0)
+				iLimit = iPulse1;
+			else
+				iLimit = iRest;
+			if (enableOutput)
+				pulseDuration2 = 0;
+		}
+		if (vSource < vPulse1) {
+			if (tempTimer2 != 0)
+				iLimit = iPulse2;
+			else
+				iLimit = iRest;
+			if (enableOutput)
+				pulseDuration1 = 0;
+		}
+
+		// Turns pulses on and off. Also turns the group of pulses on and off.
+		// Changes voltage minimums with pulses.
+		if (!isGroupOn)
+			iLimit = iRest;
+		if (systemTimer % pulseGroupInterval == 0/*systemTimer - pulseGroupInterval > myPulseGroupTick*/) {
+			// myPulseGroupTick = systemTimer;
+			isGroupOn = true;
+			tempTimer3 = systemTimer + pulseGroupDuration;
+		}
+		if ((systemTimer % pulseInterval2 == 0/*systemTimer - pulseInterval2 > myPulse2Tick*/) && isGroupOn && (pulseDuration2 > 0)) {
+			// myPulse2Tick = systemTimer;
+			iLimit = iPulse2;
+			tempTimer2 = systemTimer + pulseDuration2;
+		}
+		if ((systemTimer % pulseInterval1 == 0/*systemTimer - pulseInterval1 > myPulse1Tick*/) && isGroupOn && (pulseDuration1 > 0)) {
+			// myPulse1Tick = systemTimer;
+			iLimit = iPulse1;
+			tempTimer = systemTimer + pulseDuration1;
+		}
+		if (systemTimer == tempTimer2) {
+			iLimit = iRest;
+			tempTimer2 = 0;
+		}
+		if (systemTimer == tempTimer) {
+			if (tempTimer2 != 0)
+				iLimit = iPulse2;
+			else
+				iLimit = iRest;
+			tempTimer = 0;
+		}
+		if (systemTimer == tempTimer3) {
+			isGroupOn = false;
+			tempTimer3 = 0;
+		}
+		
+		//voltage data storage to flash.
+		if (page == 0x03u) {
+			OutputEnable(false);
+			page = 0x01u;
+			rowNum = 0;
+			iter = 0;
+			last = false;
+			once = true;
+		}
+		if (rowNum == 256) {
+			rowNum = 0;
+			page++;
+		}
+		if (iter == 256 || (!enableOutput && last)) {
+			if (!enableOutput && last) {
+				last = false;
+				for (unsigned int it = iter; it < 256; it++) {
+					rowData[it] = 0x00;
+				}
+				once = true;
+			}
+	
+			WriteData(page, rowNum, rowData);
+	
+			if (once) {
+				for (unsigned int it = 0; it < iter + 1; it++) {
+					rowData[it] = 0x00;
+				}
+			}
+	
+			iter = 0;
+			rowNum++;
+		}
+		if ((systemTimer - logTime > myLogTick) && enableOutput && (logTime > 0)) {
+			myLogTick = systemTimer;
+	
+			if (once) {
+				last = true;
+				once = false;
+			}
+
+			rowData[iter] = vSourceMin1;
+			rowData[iter+1] = vSourceMin2;
+			rowData[iter+2] = vSourceMax1;
+			rowData[iter+3] = vSourceMax2;
+			iter += 4;
+			vSourceMin = 65535;
+			vSourceMax = 0;
+		}
+
+		//goToPos(1, 1);
+		//sprintf(buff, "%s", block);
+		//unsigned int checker = block;
+
 		if (systemTimer - 20 > SlowTick)
 		{
 			SlowTick = systemTimer;
 			cls();
 			goToPos(1, 1);
-			putString("I Source:");
-			goToPos(1, 2);
-			putString("I Limit:");
-			goToPos(1, 3);
+			if (preset == 0 )
+				sprintf(buff, "Custom Profile (S)");
+			else
+				sprintf(buff, "Profile %u (S)", preset);
+			putString(buff);
+			goToPos(5, 2);
 			putString("V Source:");
-			goToPos(1, 4);
+			goToPos(5, 3);
 			putString("V Min:");
-			goToPos(1, 5);
-			putString("mA Hours:");
-			goToPos(12, 1);
+			goToPos(5, 5);
+			putString("V Rest (Y):");
+			goToPos(5, 6);
+			putString("V Pulse1 (O):");
+			goToPos(5, 7);
+			putString("V Pulse2 (H):");
+			goToPos(5, 9);
+			putString("I Source:");
+			goToPos(5, 10);
+			putString("I Limit:");
+			goToPos(5, 12);
+			putString("I Rest (R):");
+			goToPos(5, 14);
+			putString("I Pulse1 (P):");
+			goToPos(5, 15);
+			putString("P Duration1 (D):");
+			goToPos(5, 16);
+			putString("P Interval1 (N):");
+			goToPos(5, 18);
+			putString("I Pulse2 (U):");
+			goToPos(5, 19);
+			putString("P Duration2 (A):");
+			goToPos(5, 20);
+			putString("P Interval2 (T):");
+			goToPos(5, 22);
+			putString("Group Dur (G):");
+			goToPos(5, 23);
+			putString("Group Int (W):");
+			goToPos(5, 25);
+			putString("Log Time (L):");
+			goToPos(5, 26);
+			putString("mA Hours (Z):");
+			goToPos(5, 27);
+			putString("Enabled? (E):");
+			goToPos(5, 28);
+			putString("Clear Flash (C)");
+			// sprintf(buff, "%x", *(ptr+0)); //make a myBuff array that is 256 bytes large and see if that will print the whole thing to the serial port.
+			// putString(buff);
+			/*goToPos(1, 17);
+			sprintf(buff, "%u", *TEST);
+			putString(buff);*/
+			goToPos(22, 2);
+			sprintf(buff, "%6.3fV", (float)vSource / 1000.0f);
+			putString(buff);
+			goToPos(22, 3);
+			sprintf(buff, "%6.3fV", vMin / 1000.0f);
+			putString(buff);
+			goToPos(22, 5);
+			sprintf(buff, "%6.3fV", vRest / 1000.0f);
+			putString(buff);
+			goToPos(22, 6);
+			sprintf(buff, "%6.3fV", vPulse1 / 1000.0f);
+			putString(buff);
+			goToPos(22, 7);
+			sprintf(buff, "%6.3fV", vPulse2 / 1000.0f);
+			putString(buff);
+			goToPos(22, 9);
 			if (iSource < 0) iSource *= -1;
-			sprintf(buff, "%6.3f", iSource / 1000.0f);
+			sprintf(buff, "%6.3fA", iSource / 1000.0f);
 			putString(buff);
-			goToPos(12, 2);
-			sprintf(buff, "%6.3f", iLimit / 1000.0f);
+			goToPos(22, 10);
+			sprintf(buff, "%6.3fA", iLimit / 1000.0f);
 			putString(buff);
-			goToPos(12, 3);
-			sprintf(buff, "%6.3f", (float)vSource / 1000.0f);
+			goToPos(22, 12);
+			sprintf(buff, "%6.3fA", iRest / 1000.0f);
 			putString(buff);
-			goToPos(12, 4);
-			sprintf(buff, "%6.3f", vMin / 1000.0f);
+			goToPos(22, 14);
+			sprintf(buff, "%6.3fA", iPulse1 / 1000.0f);
 			putString(buff);
-			goToPos(12, 5);
+			goToPos(22, 15);
+			sprintf(buff, "%6.2fs", pulseDuration1 / 100.0f);
+			putString(buff);
+			goToPos(22, 16);
+			sprintf(buff, "%6.2fs", pulseInterval1 / 100.0f);
+			putString(buff);
+			goToPos(22, 18);
+			sprintf(buff, "%6.3fA", iPulse2 / 1000.0f);
+			putString(buff);
+			goToPos(22, 19);
+			sprintf(buff, "%6.2fs", pulseDuration2 / 100.0f);
+			putString(buff);
+			goToPos(22, 20);
+			sprintf(buff, "%6.2fs", pulseInterval2 / 100.0f);
+			putString(buff);
+			goToPos(22, 22);
+			sprintf(buff, "%6.2fs", pulseGroupDuration / 100.0f);
+			putString(buff);
+			goToPos(22, 23);
+			sprintf(buff, "%6.2fs", pulseGroupInterval / 100.0f);
+			putString(buff);
+			goToPos(22, 25);
+			sprintf(buff, "%6.2fs", logTime / 100.0f);
+			putString(buff);
+			goToPos(22, 26);
 			sprintf(buff, "%6.2f", maHours / 3600.0f);
 			putString(buff);
+			goToPos(23, 27);
+			if (enableOutput)
+				putString("  Yes");
+			else
+				putString("   No");
+			goToPos(5, 29);
 
+			if (LCDToggle) {
+				sprintf(buff, "Prf%u V:%.3f    ", preset, vSource / 1000.0f);
+				LCD_Position(0, 0);
+				LCD_PrintString(buff);
+				if (systemTimer % 40 == 0)
+					LCDToggle = false;
+			}
+			else {
+				sprintf(buff, "Prf%u mAH:%.3f", preset, maHours / 3600.0f);
+				LCD_Position(0, 0);
+				LCD_PrintString(buff);
+				if (systemTimer % 40 == 0)
+					LCDToggle = true;
+			}
+			if (pulseDuration1 != 0 && pulseDuration2 != 0)
+				sprintf(buff, "P1:ON P2:ON  ");
+			if (pulseDuration1 != 0 && pulseDuration2 == 0)
+				sprintf(buff, "P1:ON P2:OFF ");
+			if (pulseDuration1 == 0 && pulseDuration2 != 0)
+				sprintf(buff, "P1:OFF P2:ON ");
+			if (pulseDuration1 == 0 && pulseDuration2 == 0)
+				sprintf(buff, "P1:OFF P2:OFF");
+			LCD_Position(1, 0);
+			LCD_PrintString(buff);
+			/* Old LCD Printing
 			sprintf(buff, "I: %.2f V: %.2f", iLimit / 1000.0f, vSource / 1000.0f);
 			LCD_Position(0, 0);
 			LCD_PrintString(buff);
 			sprintf(buff, "Imeas: %.2f", iSource / 1000.0f);
 			LCD_Position(1, 0);
-			LCD_PrintString(buff);
+			LCD_PrintString(buff);*/
 
 			if (floatBuff[incCharIndex] == '\0')
 			{
 				fiLimit = atoff(floatBuff + 1);
 				switch (toupper(floatBuff[0]))
 				{
-				case 'I':
+				case 'S': //profile
+					if (fiLimit > 5 ||
+						fiLimit < 0) fiLimit = 1;
+					profile(fiLimit);
+					break;
+				case 'V': //voltage minimum
+					vMin = 1000.0*fiLimit;
+					break;
+				case 'Y': //rest voltage minimum
+					vRest = 1000.0*fiLimit;
+					vMin = vRest;
+					break;
+				case 'O': //pulse voltage minimum
+					vPulse1 = 1000.0*fiLimit;
+					break;
+				case 'H': //pulse voltage minimum
+					vPulse2 = 1000.0*fiLimit;
+					break;
+				case 'I': //current limit
 					if (fiLimit > 4.000 ||
 						fiLimit < 0.0) fiLimit = 0.0;
 					iLimit = 1000.0*fiLimit;
 					break;
-				case 'V':
-					vMin = 1000.0*fiLimit;
+				case 'R': //rest current
+					if (fiLimit > 4.000 ||
+						fiLimit < 0.0) fiLimit = 0.0;
+					iRest = 1000.0*fiLimit;
 					break;
-				case 'E':
+				case 'P': //pulse current
+					if (fiLimit > 4.000 ||
+						fiLimit < 0.0) fiLimit = 0.0;
+					iPulse1 = 1000.0*fiLimit;
+					break;
+				case 'D': //duration of pulse
+					pulseDuration1 = 100.0*fiLimit;
+					break;
+				case 'N': //interval between pulses
+					pulseInterval1 = 100.0*fiLimit;
+					break;
+				case 'U': //pulse current
+					if (fiLimit > 4.000 ||
+						fiLimit < 0.0) fiLimit = 0.0;
+					iPulse2 = 1000.0*fiLimit;
+					break;
+				case 'A': //duration of pulse
+					pulseDuration2 = 100.0*fiLimit;
+					break;
+				case 'T': //interval between pulses
+					pulseInterval2 = 100.0*fiLimit;
+					break;
+				case 'G': //length of group of pulses
+					pulseGroupDuration = 100.0*fiLimit;
+					break;
+				case 'W': //interval between group of pulses
+					pulseGroupInterval = 100.0*fiLimit;
+					break;
+				case 'E': //enable
 					OutputEnable(fiLimit == 1);
 					break;
-				case 'R':
+				case 'Z': //reset
 					maHours = 0;
 					break;
-        case 'B':
+				case 'L':
+					logTime = 100.0*fiLimit;
+					break;
+				case ',': //prints data to serial port ("logs" data)
+					cls();
+					goToPos(1, 1);
+					putString("'");
+					unsigned char* ptr = (unsigned char*)0x00010000u;
+					for (unsigned int i = 0x0u; i < 0x2u; i++) {
+						for (unsigned int j = 0x0u; j < 0x100u; j++) {
+							for (unsigned int k = 0x0u; k < 0x100u; k++) {
+								sprintf(buff, "%02x", *(ptr + (0x10000u * i) + (0x100 * j) + k));
+								putString(buff);
+							}
+						}
+					}
+					putString("\"");
+					break;
+				case 'C': //clear flash
+					cls();
+					goToPos(1, 1);
+					putString("Clearing Flash Storage...");
+					//clears data storage section of flash.
+					for (unsigned int i = 0; i < 256; i++) {
+						CySetTemp();
+						CyFlash_EraseRow(0x01u, i);
+						CySetTemp();
+						CyFlash_EraseRow(0x02u, i);
+					}
+					break;
+        case 'B': //bootloader
           Bootloadable_Load();
           CySoftwareReset();
           break; // We'll never see this because the previous line resets the
@@ -343,7 +797,6 @@ void PIDIsr_Interrupt_InterruptCallback()
 	systemTimer++;
 	DoPid();
 }
-
 
 void DoPid()
 {
